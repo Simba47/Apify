@@ -186,7 +186,6 @@ async function fetchInstagramReels(accountUrl) {
       const shortCode = item.shortCode || item.id;
       return {
         videoUrl: `https://www.instagram.com/reel/${shortCode}/`,
-        downloadUrl: item.videoUrl || item.video_url || null,
         title: (item.caption || item.text || '').slice(0, 100) || 'Instagram Reel',
         thumbnail: item.thumbnailUrl || item.displayUrl || item.imageUrl || item.thumbnailSrc || '',
         videoType: 'reel',
@@ -207,22 +206,6 @@ function extractInstagramId(url) {
 
 // ── Audio / transcription helpers ─────────────────────────────────────────────
 
-async function downloadDirectVideo(cdnUrl, videoId, workDir) {
-  const videoPath = path.join(workDir, `${videoId}.mp4`);
-  const mp3Path   = path.join(workDir, `${videoId}.mp3`);
-
-  const response = await axios({ url: cdnUrl, method: 'GET', responseType: 'stream' });
-  await new Promise((resolve, reject) => {
-    const writer = fs.createWriteStream(videoPath);
-    response.data.pipe(writer);
-    writer.on('finish', resolve);
-    writer.on('error', reject);
-  });
-
-  await execAsync(`ffmpeg -y -i "${videoPath}" -vn -acodec libmp3lame -q:a 4 "${mp3Path}"`);
-  safeUnlink(videoPath);
-  return mp3Path;
-}
 
 async function downloadAudio(videoUrl, videoId, platform = 'youtube', workDir) {
   const outputTemplate = path.join(workDir, `${videoId}.%(ext)s`);
@@ -262,7 +245,7 @@ async function splitAudioIntoChunks(audioFilePath, workDir) {
 async function transcribeChunk(chunkPath) {
   const form = new FormData();
   form.append('file', fs.createReadStream(chunkPath));
-  form.append('model', 'saaras:v3');
+  form.append('model', process.env.SARVAM_MODEL || 'saaras:v3');
   form.append('mode', 'transcribe');
   form.append('language_code', 'unknown');
 
@@ -319,9 +302,7 @@ async function runExtractionPipeline(videos, channelUrl, platform, send) {
       await downloadSemaphore.acquire();
       let audioPath;
       try {
-        audioPath = (platform === 'instagram' && video.downloadUrl)
-          ? await downloadDirectVideo(video.downloadUrl, mediaId, sessionDir)
-          : await downloadAudio(video.videoUrl, mediaId, platform, sessionDir);
+        audioPath = await downloadAudio(video.videoUrl, mediaId, platform, sessionDir);
       } finally {
         downloadSemaphore.release();
       }
